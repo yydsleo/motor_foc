@@ -13,7 +13,7 @@
 #define MOTOR_PWM2 5
 #define MOTOR_PWM3 6
 #define MOTOR_EN 7
-#define MOTOR_PWM_FREQ 30000
+#define MOTOR_PWM_FREQ 20000
 
 #define AS5600_I2C_SDA 15
 #define AS5600_I2C_SCL 16
@@ -230,7 +230,7 @@ esp_err_t as5600_i2c_write_reg(uint8_t reg, uint8_t value)
     return i2c_master_transmit(i2c_dev_handle, cmd, 2, -1);
 }
 
-esp_err_t as5600_read_angle(uint16_t *angle) {
+esp_err_t as5600_read_raw_angle(uint16_t *angle) {
     uint8_t data[2] = {0};
     esp_err_t ret = as5600_i2c_read_bytes(AS5600_REG_RAW_ANGLE, data, 2);
     if (ret != ESP_OK) {
@@ -240,13 +240,43 @@ esp_err_t as5600_read_angle(uint16_t *angle) {
     return ESP_OK;
 }
 
+esp_err_t as5600_read_angle_without_track(float *angle) {
+    uint16_t raw_angle = 0;
+    esp_err_t ret = as5600_read_raw_angle(&raw_angle);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    // 0.087890625其实就是360/4096(as5600编码器的角度范围是0-4096，所以要先转换成角度值，然后再转换成弧度)
+    *angle = (float)raw_angle * 0.087890625 * M_PI / 180;
+    return ESP_OK;
+}
+
+esp_err_t as5600_read_angle(float *angle) {
+    static float prev_angle = 0;
+    static int full_ratations = 0;
+
+    float angle_without_track = 0;
+    esp_err_t ret = as5600_read_angle_without_track(&angle_without_track);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    float d_angle = angle_without_track - prev_angle;
+    // 判断圈数是否超过80%的一圈
+    if (fabs(d_angle) > (0.8f * 2 * M_PI)) {
+        full_ratations += (d_angle > 0 ? -1 : 1);
+    }
+    prev_angle = angle_without_track;
+    *angle = (float) full_ratations * 2 * M_PI + angle_without_track;
+    return ESP_OK;
+}
+
 void motor_run(struct Motor* motor) {
     motor_enable(motor, 1);
     // velocityOpenloop(motor, 70);
-    velocityOpenloop(motor, 70);
-    uint16_t angle = 0;
-    as5600_read_angle(&angle);
-    printf("angle: %d\n", angle);
+    // velocityOpenloop(motor, 70);
+    static float target_angle = 0.0;
+    target_angle += 0.15;
+    veclocityClosedloop(motor, target_angle);
 }
 
 void motor_enable(struct Motor* motor, int enable) {
@@ -254,7 +284,23 @@ void motor_enable(struct Motor* motor, int enable) {
 }
 
 // foc
-#define _constrain(amt,low,high) ((amt)<(low)?(low):((amt)>(high)?(high):(amt)))
+
+void motor_set_pwm(struct Motor* motor, float ua, float ub, float uc) { 
+    motor->dc_a = _constrain(ua / motor->voltage_power_supply, 0, 1);
+    motor->dc_b = _constrain(ub / motor->voltage_power_supply, 0, 1);
+    motor->dc_c = _constrain(uc / motor->voltage_power_supply, 0, 1);
+
+    // printf("%f %f %f\n", motor->dc_a, motor->dc_b, motor->dc_c);
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, motor->channel1, motor->dc_a * 1023);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, motor->channel1);
+    
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, motor->channel2, motor->dc_b * 1023);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, motor->channel2);
+
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, motor->channel3, motor->dc_c * 1023);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, motor->channel3);
+}
+
 float _normalizeAngle(float angle){
   float a = fmod(angle, 2*M_PI);
   return a >= 0 ? a : (a + 2*M_PI);  
@@ -277,29 +323,33 @@ void setPhaseVoltage(struct Motor* motor, float Uq,float Ud, float angle_el) {
     motor_set_pwm(motor, motor->Ua, motor->Ub, motor->Uc);
 }
 
-void motor_set_pwm(struct Motor* motor, float ua, float ub, float uc) { 
-    motor->dc_a = _constrain(ua / motor->voltage_power_supply, 0, 1);
-    motor->dc_b = _constrain(ub / motor->voltage_power_supply, 0, 1);
-    motor->dc_c = _constrain(uc / motor->voltage_power_supply, 0, 1);
-
-    // printf("%f %f %f\n", motor->dc_a, motor->dc_b, motor->dc_c);
-    ledc_set_duty(LEDC_LOW_SPEED_MODE, motor->channel1, motor->dc_a * 1023);
-    ledc_update_duty(LEDC_LOW_SPEED_MODE, motor->channel1);
-    
-    ledc_set_duty(LEDC_LOW_SPEED_MODE, motor->channel2, motor->dc_b * 1023);
-    ledc_update_duty(LEDC_LOW_SPEED_MODE, motor->channel2);
-
-    ledc_set_duty(LEDC_LOW_SPEED_MODE, motor->channel3, motor->dc_c * 1023);
-    ledc_update_duty(LEDC_LOW_SPEED_MODE, motor->channel3);
-}
-
+// 开环控制
 float velocityOpenloop(struct Motor* motor, float target_velocity){
     int64_t now_us = esp_timer_get_time();
     float ts = (now_us - motor->start_ts) * 1e-6f;
     motor->shaft_angle = _normalizeAngle(motor->shaft_angle + target_velocity*ts);
     float Uq = motor->voltage_power_supply/3;
-    setPhaseVoltage(motor, Uq,  0, _electricalAngle(motor->shaft_angle, 7));
+    float eletricasl_angle = _electricalAngle(motor->shaft_angle, 7);
+    // printf("Up: %f, electrical angle: %f\n", Uq, eletricasl_angle);
+    setPhaseVoltage(motor, Uq,  0, eletricasl_angle);
     motor->start_ts = now_us;  //用于计算下一个时间间隔
     return Uq;
 }
 
+// 闭环控制
+float veclocityClosedloop(struct Motor* motor, float target_angle) { 
+    float angle = 0;
+    as5600_read_angle(&angle);
+    printf("angle: %f, target angle: %f\n", angle, target_angle);
+    as5600_read_angle_without_track(&motor->shaft_angle);
+
+    int DIR = 1;
+    float kp = 0.133;
+    float Uq = _constrain(kp * DIR * (target_angle - DIR * angle) * 180 / M_PI, -4, 4);
+    // float Uq = _constrain(3, -6, 6);
+    float eletricasl_angle = DIR * _electricalAngle(motor->shaft_angle - motor->zero_electric_angle, 7);
+    // printf("Up: %f, electrical angle: %f\n", Uq, eletricasl_angle);
+    setPhaseVoltage(motor, Uq, 0, eletricasl_angle);
+
+    return Uq;
+}

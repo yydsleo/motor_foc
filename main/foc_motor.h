@@ -58,13 +58,20 @@ void motor_run(struct Motor* motor);
 
 // as5600
 void foc_motor_i2c_init();
-esp_err_t as5600_read_angle(uint16_t *angle);
 esp_err_t as5600_i2c_read_bytes(uint8_t reg, uint8_t *data, size_t len);
 esp_err_t as5600_i2c_read_reg(uint8_t reg, uint8_t *data);
 esp_err_t as5600_i2c_write_bytes(uint8_t reg, uint8_t *data, size_t length);
 esp_err_t as5600_i2c_write_reg(uint8_t reg, uint8_t value);
+esp_err_t as5600_read_raw_angle(uint16_t *angle);
+esp_err_t as5600_read_angle_without_track(float *angle);
+esp_err_t as5600_read_angle(float *angle);
 
 // foc
+#define _constrain(amt,low,high) ((amt)<(low)?(low):((amt)>(high)?(high):(amt)))
 void motor_set_pwm(struct Motor* motor, float ua, float ub, float uc);
+float _normalizeAngle(float angle);
+float _electricalAngle(float shaftAngle, int pole_pairs);
+void setPhaseVoltage(struct Motor* motor, float Uq,float Ud, float angle_el);
 float velocityOpenloop(struct Motor* motor, float target_velocity);
+float veclocityClosedloop(struct Motor* motor, float target_velocity);
 #endif
