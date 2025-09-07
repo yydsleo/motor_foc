@@ -135,7 +135,7 @@ struct Motor* foc_init_motor(gpio_num_t pin_in1, gpio_num_t pin_in2, gpio_num_t 
     motor->channel3 = channel3;
 
     // init foc param
-    motor->voltage_power_supply = 12.6;
+    motor->voltage_power_supply = 12;
     motor->start_ts = esp_timer_get_time();
 
     return motor;
@@ -157,7 +157,7 @@ void foc_motor_i2c_init() {
     i2c_device_config_t dev_cfg = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
         .device_address = AS5600_ADDRESS,
-        .scl_speed_hz = 200*1000,
+        .scl_speed_hz = 800*1000,
     };
     ESP_ERROR_CHECK(i2c_master_bus_add_device(bus_handle, &dev_cfg, &i2c_dev_handle));
     gpio_set_level((gpio_num_t)AS5600_I2C_SDA, 1);
@@ -250,12 +250,12 @@ esp_err_t as5600_read_angle_without_track(float *angle) {
     *angle = (float)raw_angle * 0.087890625 * M_PI / 180;
     return ESP_OK;
 }
-
+float angle_without_track;
 esp_err_t as5600_read_angle(float *angle) {
     static float prev_angle = 0;
     static int full_ratations = 0;
 
-    float angle_without_track = 0;
+    // float angle_without_track = 0;
     esp_err_t ret = as5600_read_angle_without_track(&angle_without_track);
     if (ret != ESP_OK) {
         return ret;
@@ -275,7 +275,13 @@ void motor_run(struct Motor* motor) {
     // velocityOpenloop(motor, 70);
     // velocityOpenloop(motor, 70);
     static float target_angle = 0.0;
-    target_angle += 0.15;
+    static int count = 0;
+    if (count % 10 == 0) {
+        target_angle += 0.2;
+        count = 0;
+    }
+    count++;
+    // target_angle += 0.020;
     veclocityClosedloop(motor, target_angle);
 }
 
@@ -286,6 +292,7 @@ void motor_enable(struct Motor* motor, int enable) {
 // foc
 
 void motor_set_pwm(struct Motor* motor, float ua, float ub, float uc) { 
+    // printf("%f %f %f\n", ua, ub, uc);
     motor->dc_a = _constrain(ua / motor->voltage_power_supply, 0, 1);
     motor->dc_b = _constrain(ub / motor->voltage_power_supply, 0, 1);
     motor->dc_c = _constrain(uc / motor->voltage_power_supply, 0, 1);
@@ -340,13 +347,29 @@ float velocityOpenloop(struct Motor* motor, float target_velocity){
 float veclocityClosedloop(struct Motor* motor, float target_angle) { 
     float angle = 0;
     as5600_read_angle(&angle);
-    printf("angle: %f, target angle: %f\n", angle, target_angle);
-    as5600_read_angle_without_track(&motor->shaft_angle);
+    motor->shaft_angle = angle_without_track;
+
+    // show speed
+    static int64_t prev_us = 0;
+    static float prev_angle = 0;
+    static float speed = 0;
+    static int cnt = 0;
+    int64_t cur_us = esp_timer_get_time();
+    float cur_speed = (angle - prev_angle) / ((float)(cur_us - prev_us) * 1e-6);
+    speed = speed * 0.85 + cur_speed * 0.15;
+    cnt++;
+    if (cur_us - prev_us > 1000000) {
+        printf("speed: %f, cnt: %d, angle: %f, target angle: %f\n", cur_speed, cnt, angle, target_angle);
+        prev_us = cur_us;
+        prev_angle = angle;
+        cnt = 0;
+    }
 
     int DIR = 1;
     float kp = 0.133;
-    float Uq = _constrain(kp * DIR * (target_angle - DIR * angle) * 180 / M_PI, -4, 4);
-    // float Uq = _constrain(3, -6, 6);
+    // float Uq = _constrain(kp * DIR * (target_angle - DIR * angle) * 180 / M_PI, -3, 3);
+    float Uq = _constrain(kp * DIR * (target_angle - DIR * angle) * 180 / M_PI, -6, 6);
+    // float Uq = _constrain(6, -6, 6);
     float eletricasl_angle = DIR * _electricalAngle(motor->shaft_angle - motor->zero_electric_angle, 7);
     // printf("Up: %f, electrical angle: %f\n", Uq, eletricasl_angle);
     setPhaseVoltage(motor, Uq, 0, eletricasl_angle);
