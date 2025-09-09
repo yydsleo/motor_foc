@@ -5,6 +5,7 @@
 #include "esp_heap_caps.h"
 #include <driver/pulse_cnt.h>
 #include <driver/pcnt_types_legacy.h>
+#include <driver/i2c_master.h>
 
 #define emalloc(size) heap_caps_malloc(size, MALLOC_CAP_8BIT | MALLOC_CAP_SPIRAM)
 
@@ -42,6 +43,8 @@ struct Motor {
     float dc_c;
 
     int64_t start_ts;
+    // 编码器
+    i2c_master_dev_handle_t i2c_dev_handle;
 };
 
 void foc_motor_init();
@@ -57,14 +60,14 @@ void motor_enable(struct Motor* motor, int enable);
 void motor_run(struct Motor* motor);
 
 // as5600
-void foc_motor_i2c_init();
-esp_err_t as5600_i2c_read_bytes(uint8_t reg, uint8_t *data, size_t len);
-esp_err_t as5600_i2c_read_reg(uint8_t reg, uint8_t *data);
-esp_err_t as5600_i2c_write_bytes(uint8_t reg, uint8_t *data, size_t length);
-esp_err_t as5600_i2c_write_reg(uint8_t reg, uint8_t value);
-esp_err_t as5600_read_raw_angle(uint16_t *angle);
-esp_err_t as5600_read_angle_without_track(float *angle);
-esp_err_t as5600_read_angle(float *angle);
+i2c_master_dev_handle_t foc_motor_i2c_init();
+esp_err_t as5600_i2c_read_bytes(i2c_master_dev_handle_t i2c_dev_handle, uint8_t reg, uint8_t *data, size_t len);
+esp_err_t as5600_i2c_read_reg(i2c_master_dev_handle_t i2c_dev_handle, uint8_t reg, uint8_t *data);
+esp_err_t as5600_i2c_write_bytes(i2c_master_dev_handle_t i2c_dev_handle, uint8_t reg, uint8_t *data, size_t length);
+esp_err_t as5600_i2c_write_reg(i2c_master_dev_handle_t i2c_dev_handle, uint8_t reg, uint8_t value);
+esp_err_t as5600_read_raw_angle(struct Motor* motor, uint16_t *angle);
+esp_err_t as5600_read_angle_without_track(struct Motor* motor, float *angle);
+esp_err_t as5600_read_angle(struct Motor* motor, float *angle);
 
 // foc
 #define _constrain(amt,low,high) ((amt)<(low)?(low):((amt)>(high)?(high):(amt)))

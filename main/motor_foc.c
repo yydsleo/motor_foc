@@ -17,10 +17,14 @@
 #define AS5600_I2C_SDA 15
 #define AS5600_I2C_SCL 16
 #define AS5600_ADDRESS 0x36
-#define AS5600_REG_RAW_ANGLE 0x0C // 原始角度值
-#define AS5600_REG_ANGLE 0x0E     // 滤波后的角度值
-#define AS5600_REG_STATUS 0x0B    // 状态寄存器
-#define AS5600_REG_CONFIG 0x09    // 配置寄存器
+// 原始角度值
+#define AS5600_REG_RAW_ANGLE 0x0C
+// 滤波后的角度值
+#define AS5600_REG_ANGLE 0x0E
+// 状态寄存器
+#define AS5600_REG_STATUS 0x0B
+// 配置寄存器
+#define AS5600_REG_CONFIG 0x09
 
 static const char *TAG = "motor";
 
@@ -43,7 +47,7 @@ void foc_motor_init() {
         LEDC_CHANNEL_0, LEDC_CHANNEL_1, LEDC_CHANNEL_2,
         LEDC_TIMER_0);
 
-    foc_motor_i2c_init();
+    motor_left->i2c_dev_handle = foc_motor_i2c_init();
 }
 
 struct Motor* get_left_motor() {
@@ -141,8 +145,8 @@ struct Motor* foc_init_motor(gpio_num_t pin_in1, gpio_num_t pin_in2, gpio_num_t 
 }
 
 
-i2c_master_dev_handle_t i2c_dev_handle;
-void foc_motor_i2c_init() {
+i2c_master_dev_handle_t foc_motor_i2c_init() {
+    i2c_master_dev_handle_t i2c_dev_handle;
     i2c_master_bus_config_t bus_cfg = {
         .clk_source = I2C_CLK_SRC_DEFAULT,
         .i2c_port = I2C_NUM_0,
@@ -163,9 +167,10 @@ void foc_motor_i2c_init() {
     gpio_set_level((gpio_num_t)AS5600_I2C_SCL, 1);
 
     uint8_t status = 0;
-    ESP_ERROR_CHECK(as5600_i2c_read_reg(AS5600_REG_STATUS, &status));
+    ESP_ERROR_CHECK(as5600_i2c_read_reg(i2c_dev_handle, AS5600_REG_STATUS, &status));
 
     ESP_LOGI(TAG, "I2C bus initialized");
+    return i2c_dev_handle;
     /*
     for (int i = 0; i < 128; i += 16) {
         for (int j = 0; j < 16; j++) {
@@ -194,7 +199,7 @@ void foc_motor_i2c_init() {
     */
 }
 
-esp_err_t as5600_i2c_read_bytes(uint8_t reg, uint8_t *data, size_t len)
+esp_err_t as5600_i2c_read_bytes(i2c_master_dev_handle_t i2c_dev_handle, uint8_t reg, uint8_t *data, size_t len)
 {
     esp_err_t ret = i2c_master_transmit(i2c_dev_handle, &reg, 1, -1);
     if (ret != ESP_OK) {
@@ -203,7 +208,7 @@ esp_err_t as5600_i2c_read_bytes(uint8_t reg, uint8_t *data, size_t len)
     return i2c_master_receive(i2c_dev_handle, data, len, -1);
 }
 
-esp_err_t as5600_i2c_read_reg(uint8_t reg, uint8_t *data)
+esp_err_t as5600_i2c_read_reg(i2c_master_dev_handle_t i2c_dev_handle, uint8_t reg, uint8_t *data)
 {
     esp_err_t ret = i2c_master_transmit(i2c_dev_handle, &reg, 1, -1);
     if (ret != ESP_OK) {
@@ -212,7 +217,7 @@ esp_err_t as5600_i2c_read_reg(uint8_t reg, uint8_t *data)
     return i2c_master_receive(i2c_dev_handle, data, 1, -1);
 }
 
-esp_err_t as5600_i2c_write_bytes(uint8_t reg, uint8_t *data, size_t length)
+esp_err_t as5600_i2c_write_bytes(i2c_master_dev_handle_t i2c_dev_handle, uint8_t reg, uint8_t *data, size_t length)
 {
     esp_err_t ret = i2c_master_transmit(i2c_dev_handle, &reg, 1, -1);
     if (ret != ESP_OK) {
@@ -223,15 +228,15 @@ esp_err_t as5600_i2c_write_bytes(uint8_t reg, uint8_t *data, size_t length)
     return ret;
 }
 
-esp_err_t as5600_i2c_write_reg(uint8_t reg, uint8_t value)
+esp_err_t as5600_i2c_write_reg(i2c_master_dev_handle_t i2c_dev_handle, uint8_t reg, uint8_t value)
 {
     uint8_t cmd[2] = {reg, value};
     return i2c_master_transmit(i2c_dev_handle, cmd, 2, -1);
 }
 
-esp_err_t as5600_read_raw_angle(uint16_t *angle) {
+esp_err_t as5600_read_raw_angle(struct Motor* motor, uint16_t *angle) {
     uint8_t data[2] = {0};
-    esp_err_t ret = as5600_i2c_read_bytes(AS5600_REG_RAW_ANGLE, data, 2);
+    esp_err_t ret = as5600_i2c_read_bytes(motor->i2c_dev_handle, AS5600_REG_RAW_ANGLE, data, 2);
     if (ret != ESP_OK) {
         return ret;
     }
@@ -239,9 +244,9 @@ esp_err_t as5600_read_raw_angle(uint16_t *angle) {
     return ESP_OK;
 }
 
-esp_err_t as5600_read_angle_without_track(float *angle) {
+esp_err_t as5600_read_angle_without_track(struct Motor* motor, float *angle) {
     uint16_t raw_angle = 0;
-    esp_err_t ret = as5600_read_raw_angle(&raw_angle);
+    esp_err_t ret = as5600_read_raw_angle(motor, &raw_angle);
     if (ret != ESP_OK) {
         return ret;
     }
@@ -250,12 +255,12 @@ esp_err_t as5600_read_angle_without_track(float *angle) {
     return ESP_OK;
 }
 float angle_without_track;
-esp_err_t as5600_read_angle(float *angle) {
+esp_err_t as5600_read_angle(struct Motor* motor, float *angle) {
     static float prev_angle = 0;
     static int full_ratations = 0;
 
     // float angle_without_track = 0;
-    esp_err_t ret = as5600_read_angle_without_track(&angle_without_track);
+    esp_err_t ret = as5600_read_angle_without_track(motor, &angle_without_track);
     if (ret != ESP_OK) {
         return ret;
     }
@@ -273,9 +278,13 @@ void motor_run(struct Motor* motor) {
     motor_enable(motor, 1);
     // velocityOpenloop(motor, 70);
     // velocityOpenloop(motor, 70);
+    /*
     static float target_angle = 0.0;
     target_angle += 0.020;
-    positionClosedloop(motor, target_angle);
+    positionClosedloop(motor, target_angle);s
+    */
+
+    velocityClosedloop(motor, 50);
 }
 
 void motor_enable(struct Motor* motor, int enable) {
@@ -325,7 +334,7 @@ void setPhaseVoltage(struct Motor* motor, float Uq,float Ud, float angle_el) {
 
 void setTorque(struct Motor* motor, float Uq, float angle_el) {
     Uq = _constrain(Uq, -motor->voltage_power_supply/2, motor->voltage_power_supply/2);
-    float Ud = 0;
+    // float Ud = 0;
     angle_el = _normalizeAngle(angle_el);
     // 帕克逆变换
     motor->Ualpha = -Uq*sin(angle_el); 
@@ -355,7 +364,7 @@ float velocityOpenloop(struct Motor* motor, float target_velocity){
 // 闭环控制
 float positionClosedloop(struct Motor* motor, float target_angle) { 
     float angle = 0;
-    as5600_read_angle(&angle);
+    as5600_read_angle(motor, &angle);
     motor->shaft_angle = angle_without_track;
 
     // show speed
@@ -387,6 +396,41 @@ float positionClosedloop(struct Motor* motor, float target_angle) {
 }
 
 float velocityClosedloop(struct Motor* motor, float target_velocity) {
+    float angle = 0;
+    as5600_read_angle(motor, &angle);
+    motor->shaft_angle = angle_without_track;
 
+    // 获取速度
+    static int64_t prev_us = 0;
+    static float prev_angle = 0;
+    int64_t cur_us = esp_timer_get_time();
+    float dt = (float)(cur_us - prev_us) * 1e-6;
+    float dangle = (angle - prev_angle);
+    float cur_velocity = dangle / dt;
+    prev_us = cur_us;
+    prev_angle = angle;
+
+    // 使用低通滤波算法获取速度
+    float TF = 0.009;
+    float alpha = TF / (TF + dt);
+    static float velocity = 0;
+    velocity = velocity * alpha + cur_velocity * (1 - alpha);
+    static int cnt = 0;
+    if (cnt >= 4000) {
+        printf("velocity: %f, target velocity: %f\n", velocity, target_velocity);
+        cnt = 0;
+    }
+    cnt++;
+
+    // PI控制
+    float dvelocity = target_velocity - velocity;
+    float kp = 0.003, ki = 0.002;
+    static float integral = 0;
+    static float prev_dvelocity = 0;
+    integral += (dvelocity + prev_dvelocity) * 0.5 * dt;
+    prev_dvelocity = dvelocity;
+    float pi = kp * dvelocity + ki * integral;
+    float Up = _constrain(pi * 180 / M_PI, -6, 6);
+    setTorque(motor, Up, _electricalAngle(motor->shaft_angle - motor->zero_electric_angle, 7));
     return 0;
 }
