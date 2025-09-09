@@ -2,7 +2,7 @@ file(GLOB ESP32CAMERA "./components/esp32-camera/driver/private_include/*.h")
 
 idf_component_register(SRCS
     "main.c"
-    "foc_motor.c"
+    "motor_foc.c"
     INCLUDE_DIRS
     "."
 

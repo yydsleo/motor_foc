@@ -1,6 +1,5 @@
-#include "foc_motor.h"
+#include "motor_foc.h"
 #include "esp_log.h"
-#include <driver/mcpwm.h>
 #include "esp_timer.h"
 #include <driver/ledc.h>
 #include <driver/i2c_master.h>
@@ -275,14 +274,8 @@ void motor_run(struct Motor* motor) {
     // velocityOpenloop(motor, 70);
     // velocityOpenloop(motor, 70);
     static float target_angle = 0.0;
-    static int count = 0;
-    if (count % 10 == 0) {
-        target_angle += 0.2;
-        count = 0;
-    }
-    count++;
-    // target_angle += 0.020;
-    veclocityClosedloop(motor, target_angle);
+    target_angle += 0.020;
+    positionClosedloop(motor, target_angle);
 }
 
 void motor_enable(struct Motor* motor, int enable) {
@@ -330,6 +323,22 @@ void setPhaseVoltage(struct Motor* motor, float Uq,float Ud, float angle_el) {
     motor_set_pwm(motor, motor->Ua, motor->Ub, motor->Uc);
 }
 
+void setTorque(struct Motor* motor, float Uq, float angle_el) {
+    Uq = _constrain(Uq, -motor->voltage_power_supply/2, motor->voltage_power_supply/2);
+    float Ud = 0;
+    angle_el = _normalizeAngle(angle_el);
+    // 帕克逆变换
+    motor->Ualpha = -Uq*sin(angle_el); 
+    motor->Ubeta = Uq*cos(angle_el); 
+
+    // 克拉克逆变换
+    motor->Ua = motor->Ualpha + motor->voltage_power_supply/2;
+    motor->Ub = (sqrt(3)*motor->Ubeta-motor->Ualpha)/2 + motor->voltage_power_supply/2;
+    motor->Uc = (-motor->Ualpha-sqrt(3)*motor->Ubeta)/2 + motor->voltage_power_supply/2;
+    motor_set_pwm(motor, motor->Ua, motor->Ub, motor->Uc);
+}
+
+
 // 开环控制
 float velocityOpenloop(struct Motor* motor, float target_velocity){
     int64_t now_us = esp_timer_get_time();
@@ -344,7 +353,7 @@ float velocityOpenloop(struct Motor* motor, float target_velocity){
 }
 
 // 闭环控制
-float veclocityClosedloop(struct Motor* motor, float target_angle) { 
+float positionClosedloop(struct Motor* motor, float target_angle) { 
     float angle = 0;
     as5600_read_angle(&angle);
     motor->shaft_angle = angle_without_track;
@@ -359,7 +368,7 @@ float veclocityClosedloop(struct Motor* motor, float target_angle) {
     speed = speed * 0.85 + cur_speed * 0.15;
     cnt++;
     if (cur_us - prev_us > 1000000) {
-        printf("speed: %f, cnt: %d, angle: %f, target angle: %f\n", cur_speed, cnt, angle, target_angle);
+        // printf("speed: %f, cnt: %d, angle: %f, target angle: %f\n", cur_speed, cnt, angle, target_angle);
         prev_us = cur_us;
         prev_angle = angle;
         cnt = 0;
@@ -375,4 +384,9 @@ float veclocityClosedloop(struct Motor* motor, float target_angle) {
     setPhaseVoltage(motor, Uq, 0, eletricasl_angle);
 
     return Uq;
+}
+
+float velocityClosedloop(struct Motor* motor, float target_velocity) {
+
+    return 0;
 }

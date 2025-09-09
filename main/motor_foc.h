@@ -72,6 +72,8 @@ void motor_set_pwm(struct Motor* motor, float ua, float ub, float uc);
 float _normalizeAngle(float angle);
 float _electricalAngle(float shaftAngle, int pole_pairs);
 void setPhaseVoltage(struct Motor* motor, float Uq,float Ud, float angle_el);
+void setTorque(struct Motor* motor, float Uq, float angle_el);
 float velocityOpenloop(struct Motor* motor, float target_velocity);
-float veclocityClosedloop(struct Motor* motor, float target_velocity);
+float positionClosedloop(struct Motor* motor, float target_angle);
+float velocityClosedloop(struct Motor* motor, float target_velocity);
 #endif

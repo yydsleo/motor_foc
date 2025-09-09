@@ -3,7 +3,7 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
-#include "foc_motor.h"
+#include "motor_foc.h"
 #include "esp_rom_gpio.h"
 
 static const char* TAG = "main";
