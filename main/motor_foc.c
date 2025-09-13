@@ -26,6 +26,16 @@
 // 配置寄存器
 #define AS5600_REG_CONFIG 0x09
 
+// SVPWM
+#define _SQRT3 1.73205080757f
+#define _SQRT3_2 0.86602540378f
+#define _1_SQRT3 0.57735026919f
+#define _2_SQRT3 1.15470053838f
+#define _PI 3.14159265359f
+#define _PI_2 1.57079632679f
+#define _PI_3 1.0471975512f
+#define _3PI_2 4.71238898038f
+
 static const char *TAG = "motor";
 
 struct Motor *motor_left, *motor_right;
@@ -284,7 +294,7 @@ void motor_run(struct Motor* motor) {
     positionClosedloop(motor, target_angle);s
     */
 
-    velocityClosedloop(motor, 50);
+    velocityClosedloop(motor, 70);
 }
 
 void motor_enable(struct Motor* motor, int enable) {
@@ -329,6 +339,64 @@ void setPhaseVoltage(struct Motor* motor, float Uq,float Ud, float angle_el) {
     motor->Ua = motor->Ualpha + motor->voltage_power_supply/2;
     motor->Ub = (sqrt(3)*motor->Ubeta-motor->Ualpha)/2 + motor->voltage_power_supply/2;
     motor->Uc = (-motor->Ualpha-sqrt(3)*motor->Ubeta)/2 + motor->voltage_power_supply/2;
+    motor_set_pwm(motor, motor->Ua, motor->Ub, motor->Uc);
+}
+
+void setTorqueSVPWM(struct Motor* motor, float Uq, float angle_el) {
+    if (Uq < 0)
+        angle_el += _PI;
+    Uq = fabs(Uq);
+
+    angle_el = _normalizeAngle(angle_el + _PI_2);
+    int sector = floor(angle_el / _PI_3) + 1;
+    // calculate the duty cycles
+    float T1 = _SQRT3 * sin(sector * _PI_3 - angle_el) * Uq / motor->voltage_power_supply;
+    float T2 = _SQRT3 * sin(angle_el - (sector - 1.0) * _PI_3) * Uq / motor->voltage_power_supply;
+    float T0 = 1 - T1 - T2;
+
+    float Ta, Tb, Tc;
+    switch (sector)
+    {
+    case 1:
+        Ta = T1 + T2 + T0 / 2;
+        Tb = T2 + T0 / 2;
+        Tc = T0 / 2;
+        break;
+    case 2:
+        Ta = T1 + T0 / 2;
+        Tb = T1 + T2 + T0 / 2;
+        Tc = T0 / 2;
+        break;
+    case 3:
+        Ta = T0 / 2;
+        Tb = T1 + T2 + T0 / 2;
+        Tc = T2 + T0 / 2;
+        break;
+    case 4:
+        Ta = T0 / 2;
+        Tb = T1 + T0 / 2;
+        Tc = T1 + T2 + T0 / 2;
+        break;
+    case 5:
+        Ta = T2 + T0 / 2;
+        Tb = T0 / 2;
+        Tc = T1 + T2 + T0 / 2;
+        break;
+    case 6:
+        Ta = T1 + T2 + T0 / 2;
+        Tb = T0 / 2;
+        Tc = T1 + T0 / 2;
+        break;
+    default:
+        Ta = 0;
+        Tb = 0;
+        Tc = 0;
+    }
+
+    motor->Ua = Ta * motor->voltage_power_supply;
+    motor->Ub = Tb * motor->voltage_power_supply;
+    motor->Uc = Tc * motor->voltage_power_supply;
+
     motor_set_pwm(motor, motor->Ua, motor->Ub, motor->Uc);
 }
 
@@ -428,9 +496,16 @@ float velocityClosedloop(struct Motor* motor, float target_velocity) {
     static float integral = 0;
     static float prev_dvelocity = 0;
     integral += (dvelocity + prev_dvelocity) * 0.5 * dt;
+    if (fabs(integral) > 100) {
+        integral = integral > 0 ? 100 : -100;
+    }
     prev_dvelocity = dvelocity;
     float pi = kp * dvelocity + ki * integral;
     float Up = _constrain(pi * 180 / M_PI, -6, 6);
-    setTorque(motor, Up, _electricalAngle(motor->shaft_angle - motor->zero_electric_angle, 7));
+    // float Up = 0;
+    // setTorque(motor, Up, _electricalAngle(motor->shaft_angle, 7));
+
+    // setTorque(motor, Up, _electricalAngle(motor->shaft_angle, 7));
+    setTorqueSVPWM(motor, Up, _electricalAngle(motor->shaft_angle, 7));
     return 0;
 }
